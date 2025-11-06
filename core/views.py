@@ -72,8 +72,8 @@ class CookieLoginView(APIView):
             value=access_token,
             max_age=max_age,
             httponly=True,
-            secure=False,  # True in production with HTTPS
-            samesite="Lax",
+            secure=True,  # True in production with HTTPS
+            samesite="None",
             path="/",
         )
         response.set_cookie(
@@ -81,8 +81,8 @@ class CookieLoginView(APIView):
             value=refresh_token,
             max_age=max_age,
             httponly=True,
-            secure=False,  # True in production with HTTPS
-            samesite="Lax",
+            secure=True,  # True in production with HTTPS
+            samesite="None",
             path="/",
         )
 
