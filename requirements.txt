@@ -8,3 +8,4 @@ djangorestframework
 djangorestframework-simplejwt
 django-cors-headers
 numpy
+pandas
