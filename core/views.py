@@ -90,15 +90,30 @@ class CookieLoginView(APIView):
 
 
 # ---------------- LOGOUT -----------------
+# ---------------- LOGOUT -----------------
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [CookieJWTAuthentication]
 
     def post(self, request):
-        response = Response({"message": "Logged out successfully"}, status=status.HTTP_200_OK)
-        response.delete_cookie("access_token")
-        response.delete_cookie("refresh_token")
+        response = Response(
+            {"message": "Logged out successfully"},
+            status=status.HTTP_200_OK
+        )
+
+        # ✅ Must match how cookies were created
+        cookie_params = {
+            "path": "/",
+            "secure": True,          # Match your login cookies
+            "httponly": True,
+            "samesite": "None",
+        }
+
+        response.delete_cookie("access_token", **cookie_params)
+        response.delete_cookie("refresh_token", **cookie_params)
+
         return response
+
 
 
 # ---------------- ATTENDANCE -----------------
