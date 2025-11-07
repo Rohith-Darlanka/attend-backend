@@ -456,359 +456,6 @@ def erripuka_view(request):
 # ✅ MACHINE LEARNING FEATURES (NEWLY ADDED)
 # ============================================================
 
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, accuracy_score, silhouette_score
-from datetime import datetime
-import json
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def linear_regression_prediction(request):
-    """
-    Linear Regression for Attendance Trend Analysis
-    Predicts future attendance rates based on historical data
-    """
-    try:
-        data = request.data
-        sessions = data.get('sessions', [])
-        
-        if len(sessions) < 3:
-            return Response({
-                'error': 'Need at least 3 sessions for regression analysis'
-            }, status=400)
-        
-        # Prepare data
-        df = pd.DataFrame(sessions)
-        df['date'] = pd.to_datetime(df['session_created'])
-        df = df.sort_values('date')
-        
-        df['attendance_rate'] = (
-            df['num_students_attended'] / 
-            (df['num_students_attended'] + df['num_students_absent'])
-        ) * 100
-        
-        X = np.arange(len(df)).reshape(-1, 1)
-        y = df['attendance_rate'].values
-        
-        model = LinearRegression()
-        model.fit(X, y)
-        y_pred = model.predict(X)
-        
-        r2 = r2_score(y, y_pred)
-        
-        future_X = np.arange(len(df), len(df) + 5).reshape(-1, 1)
-        future_predictions = np.clip(model.predict(future_X), 0, 100)
-        
-        historical_data = []
-        for i, row in df.iterrows():
-            historical_data.append({
-                'session_id': row['session_id'],
-                'date': row['date'].strftime('%Y-%m-%d'),
-                'actual': round(row['attendance_rate'], 2),
-                'predicted': round(y_pred[list(df.index).index(i)], 2)
-            })
-        
-        future_data = []
-        for i, pred in enumerate(future_predictions):
-            future_data.append({
-                'session': f'Session {len(df) + i + 1}',
-                'predicted': round(pred, 2),
-                'confidence': round(max(60, 95 - (i * 7)), 2)
-            })
-        
-        slope = model.coef_[0]
-        trend = 'Improving' if slope > 0.5 else 'Declining' if slope < -0.5 else 'Stable'
-        
-        return Response({
-            'model': 'Linear Regression',
-            'algorithm': 'scikit-learn LinearRegression',
-            'metrics': {
-                'r2_score': round(r2, 4),
-                'slope': round(slope, 4),
-                'intercept': round(model.intercept_, 2),
-                'equation': f'y = {slope:.4f}x + {model.intercept_:.2f}'
-            },
-            'trend': trend,
-            'historical_data': historical_data,
-            'future_predictions': future_data,
-            'sessions_analyzed': len(df)
-        })
-        
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def random_forest_classification(request):
-    """
-    Random Forest for Student Risk Classification
-    Classifies students as Pass/Fail based on attendance patterns
-    """
-    try:
-        data = request.data
-        sessions = data.get('sessions', [])
-        
-        if len(sessions) < 2:
-            return Response({'error': 'Need at least 2 sessions for classification'}, status=400)
-        
-        student_records = {}
-        for session in sessions:
-            for roll in session.get('present_roll_numbers', []):
-                student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
-                student_records[roll]['present'] += 1
-                student_records[roll]['sessions'].append(1)
-            for roll in session.get('absent_roll_numbers', []):
-                student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
-                student_records[roll]['absent'] += 1
-                student_records[roll]['sessions'].append(0)
-        
-        if len(student_records) < 5:
-            return Response({'error': 'Need at least 5 students for classification'}, status=400)
-        
-        features, labels, students = [], [], []
-        for roll, record in student_records.items():
-            total = record['present'] + record['absent']
-            if total == 0:
-                continue
-            rate = (record['present'] / total) * 100
-            
-            consistency = 0
-            if len(record['sessions']) > 1:
-                consecutive = 0
-                max_consecutive = 0
-                for attended in record['sessions']:
-                    if attended:
-                        consecutive += 1
-                        max_consecutive = max(max_consecutive, consecutive)
-                    else:
-                        consecutive = 0
-                consistency = (max_consecutive / len(record['sessions'])) * 100
-            
-            features.append([rate, record['present'], record['absent'], consistency])
-            labels.append(1 if rate >= 75 else 0)
-            students.append(roll)
-        
-        X, y = np.array(features), np.array(labels)
-        
-        model = RandomForestClassifier(
-            n_estimators=100, max_depth=10, random_state=42, class_weight='balanced'
-        )
-        
-        if len(X) >= 10:
-            X_train, X_test, y_train, y_test, _, students_test = train_test_split(
-                X, y, students, test_size=0.2, random_state=42
-            )
-            model.fit(X_train, y_train)
-            accuracy = accuracy_score(y_test, model.predict(X_test))
-        else:
-            model.fit(X, y)
-            accuracy = accuracy_score(y, model.predict(X))
-        
-        predictions = model.predict(X)
-        probabilities = model.predict_proba(X)
-        
-        feature_names = ['Attendance Rate', 'Present Count', 'Absent Count', 'Consistency']
-        importance = dict(zip(feature_names, model.feature_importances_))
-        
-        classifications, pass_students, fail_students = [], [], []
-        for i, roll in enumerate(students):
-            pred = predictions[i]
-            prob = probabilities[i]
-            student_data = {
-                'roll': roll,
-                'attendance_rate': round(features[i][0], 2),
-                'present': int(features[i][1]),
-                'absent': int(features[i][2]),
-                'consistency': round(features[i][3], 2),
-                'prediction': 'Pass' if pred == 1 else 'Fail',
-                'confidence': round(max(prob) * 100, 2),
-            }
-            classifications.append(student_data)
-            (pass_students if pred == 1 else fail_students).append(student_data)
-        
-        return Response({
-            'model': 'Random Forest Classifier',
-            'algorithm': 'scikit-learn RandomForestClassifier',
-            'metrics': {
-                'accuracy': round(accuracy * 100, 2),
-                'total_students': len(students),
-                'pass_predictions': len(pass_students),
-                'fail_predictions': len(fail_students)
-            },
-            'feature_importance': {k: round(v * 100, 2) for k, v in importance.items()},
-            'classifications': classifications,
-            'pass_students': pass_students,
-            'fail_students': fail_students,
-            'sessions_analyzed': len(sessions)
-        })
-        
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def kmeans_clustering(request):
-    """
-    K-Means Clustering for Student Segmentation
-    Groups students into performance clusters
-    """
-    try:
-        data = request.data
-        sessions = data.get('sessions', [])
-        n_clusters = data.get('n_clusters', 4)
-        
-        if len(sessions) < 2:
-            return Response({'error': 'Need at least 2 sessions for clustering'}, status=400)
-        
-        student_records = {}
-        for session in sessions:
-            for roll in session.get('present_roll_numbers', []):
-                student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
-                student_records[roll]['present'] += 1
-                student_records[roll]['sessions'].append(1)
-            for roll in session.get('absent_roll_numbers', []):
-                student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
-                student_records[roll]['absent'] += 1
-                student_records[roll]['sessions'].append(0)
-        
-        if len(student_records) < n_clusters:
-            return Response({'error': f'Need at least {n_clusters} students for {n_clusters} clusters'}, status=400)
-        
-        features, students = [], []
-        for roll, record in student_records.items():
-            total = record['present'] + record['absent']
-            if total == 0:
-                continue
-            rate = (record['present'] / total) * 100
-            
-            consistency = 0
-            if len(record['sessions']) > 1:
-                consecutive = 0
-                max_consecutive = 0
-                for attended in record['sessions']:
-                    if attended:
-                        consecutive += 1
-                        max_consecutive = max(max_consecutive, consecutive)
-                    else:
-                        consecutive = 0
-                consistency = (max_consecutive / len(record['sessions'])) * 100
-            
-            features.append([rate, consistency, total])
-            students.append(roll)
-        
-        X = np.array(features)
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(X_scaled)
-        silhouette = silhouette_score(X_scaled, cluster_labels)
-        centers = scaler.inverse_transform(kmeans.cluster_centers_)
-        
-        clusters = {}
-        for i in range(n_clusters):
-            cluster_students = []
-            cluster_indices = np.where(cluster_labels == i)[0]
-            for idx in cluster_indices:
-                cluster_students.append({
-                    'roll': students[idx],
-                    'attendance_rate': round(features[idx][0], 2),
-                    'consistency': round(features[idx][1], 2),
-                    'total_sessions': int(features[idx][2])
-                })
-            cluster_students.sort(key=lambda x: x['attendance_rate'], reverse=True)
-            
-            avg_rate = centers[i][0]
-            if avg_rate >= 90:
-                cluster_name = 'Excellent (90–100%)'
-            elif avg_rate >= 80:
-                cluster_name = 'Good (80–89%)'
-            elif avg_rate >= 70:
-                cluster_name = 'Satisfactory (70–79%)'
-            elif avg_rate >= 60:
-                cluster_name = 'Needs Improvement (60–69%)'
-            else:
-                cluster_name = 'At Risk (<60%)'
-            
-            clusters[f'cluster_{i}'] = {
-                'name': cluster_name,
-                'center': {
-                    'attendance_rate': round(centers[i][0], 2),
-                    'consistency': round(centers[i][1], 2),
-                    'avg_sessions': round(centers[i][2], 2)
-                },
-                'size': len(cluster_students),
-                'students': cluster_students
-            }
-        
-        sorted_clusters = dict(sorted(
-            clusters.items(), key=lambda x: x[1]['center']['attendance_rate'], reverse=True
-        ))
-        
-        return Response({
-            'model': 'K-Means Clustering',
-            'algorithm': 'scikit-learn KMeans',
-            'metrics': {
-                'n_clusters': n_clusters,
-                'silhouette_score': round(silhouette, 4),
-                'total_students': len(students),
-                'inertia': round(kmeans.inertia_, 2)
-            },
-            'clusters': sorted_clusters,
-            'sessions_analyzed': len(sessions)
-        })
-        
-    except Exception as e:
-        return Response({'error': str(e)}, status=500)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def ml_models_info(request):
-    """
-    Returns information about available ML models
-    """
-    return Response({
-        'available_models': [
-            {
-                'id': 'linear-regression',
-                'name': 'Linear Regression',
-                'description': 'Predicts future attendance trends using historical data',
-                'type': 'Regression',
-                'endpoint': '/api/ml/linear-regression/',
-                'min_sessions': 3
-            },
-            {
-                'id': 'random-forest',
-                'name': 'Random Forest Classifier',
-                'description': 'Classifies students as Pass/Fail based on attendance patterns',
-                'type': 'Classification',
-                'endpoint': '/api/ml/random-forest/',
-                'min_students': 5
-            },
-            {
-                'id': 'kmeans',
-                'name': 'K-Means Clustering',
-                'description': 'Groups students into performance clusters',
-                'type': 'Clustering',
-                'endpoint': '/api/ml/kmeans/',
-                'min_students': 4
-            }
-        ]
-    })
-# ============================================================
-# ✅ MACHINE LEARNING FEATURES (WITH DATA CLEANING)
-# ============================================================
-
 # import numpy as np
 # import pandas as pd
 # from sklearn.linear_model import LinearRegression
@@ -821,205 +468,6 @@ def ml_models_info(request):
 # import json
 
 
-# # ============================================================
-# # DATA CLEANING AND PREPROCESSING UTILITIES
-# # ============================================================
-
-# def clean_session_data(sessions):
-#     """
-#     Clean and validate session data
-#     - Remove duplicates
-#     - Handle missing values
-#     - Validate data types
-#     - Remove invalid entries
-#     """
-#     if not sessions:
-#         return []
-    
-#     cleaned_sessions = []
-#     seen_session_ids = set()
-    
-#     for session in sessions:
-#         # Skip duplicates
-#         session_id = session.get('session_id')
-#         if session_id in seen_session_ids:
-#             continue
-#         seen_session_ids.add(session_id)
-        
-#         # Validate required fields
-#         if not session.get('session_created'):
-#             continue
-        
-#         # Clean and validate numeric fields
-#         num_attended = session.get('num_students_attended', 0)
-#         num_absent = session.get('num_students_absent', 0)
-        
-#         # Convert to int and handle invalid values
-#         try:
-#             num_attended = max(0, int(num_attended))
-#             num_absent = max(0, int(num_absent))
-#         except (ValueError, TypeError):
-#             continue
-        
-#         # Skip sessions with no students
-#         if num_attended + num_absent == 0:
-#             continue
-        
-#         # Clean roll number lists
-#         present_rolls = session.get('present_roll_numbers', [])
-#         absent_rolls = session.get('absent_roll_numbers', [])
-        
-#         # Remove invalid roll numbers and duplicates
-#         present_rolls = list(set([r for r in present_rolls if r]))
-#         absent_rolls = list(set([r for r in absent_rolls if r]))
-        
-#         # Remove overlaps (student can't be both present and absent)
-#         absent_rolls = [r for r in absent_rolls if r not in present_rolls]
-        
-#         cleaned_sessions.append({
-#             'session_id': session_id,
-#             'session_created': session['session_created'],
-#             'num_students_attended': num_attended,
-#             'num_students_absent': num_absent,
-#             'present_roll_numbers': present_rolls,
-#             'absent_roll_numbers': absent_rolls
-#         })
-    
-#     return cleaned_sessions
-
-
-# def preprocess_attendance_data(sessions):
-#     """
-#     Preprocess session data for regression analysis
-#     - Parse dates
-#     - Calculate attendance rates
-#     - Sort chronologically
-#     - Handle outliers
-#     """
-#     df = pd.DataFrame(sessions)
-    
-#     # Parse dates
-#     df['date'] = pd.to_datetime(df['session_created'], errors='coerce')
-#     df = df.dropna(subset=['date'])
-#     df = df.sort_values('date').reset_index(drop=True)
-    
-#     # Calculate attendance rate
-#     total_students = df['num_students_attended'] + df['num_students_absent']
-#     df['attendance_rate'] = (df['num_students_attended'] / total_students) * 100
-    
-#     # Handle outliers using IQR method
-#     Q1 = df['attendance_rate'].quantile(0.25)
-#     Q3 = df['attendance_rate'].quantile(0.75)
-#     IQR = Q3 - Q1
-#     lower_bound = max(0, Q1 - 1.5 * IQR)
-#     upper_bound = min(100, Q3 + 1.5 * IQR)
-    
-#     # Cap outliers instead of removing them
-#     df['attendance_rate'] = df['attendance_rate'].clip(lower_bound, upper_bound)
-    
-#     return df
-
-
-# def clean_student_records(sessions):
-#     """
-#     Clean and aggregate student records
-#     - Remove invalid roll numbers
-#     - Handle missing data
-#     - Calculate consistent metrics
-#     """
-#     student_records = {}
-    
-#     for session in sessions:
-#         present_rolls = session.get('present_roll_numbers', [])
-#         absent_rolls = session.get('absent_roll_numbers', [])
-        
-#         # Process present students
-#         for roll in present_rolls:
-#             # Clean roll number
-#             roll = str(roll).strip()
-#             if not roll or roll.lower() == 'none':
-#                 continue
-            
-#             if roll not in student_records:
-#                 student_records[roll] = {
-#                     'present': 0,
-#                     'absent': 0,
-#                     'sessions': []
-#                 }
-#             student_records[roll]['present'] += 1
-#             student_records[roll]['sessions'].append(1)
-        
-#         # Process absent students
-#         for roll in absent_rolls:
-#             roll = str(roll).strip()
-#             if not roll or roll.lower() == 'none':
-#                 continue
-            
-#             if roll not in student_records:
-#                 student_records[roll] = {
-#                     'present': 0,
-#                     'absent': 0,
-#                     'sessions': []
-#                 }
-#             student_records[roll]['absent'] += 1
-#             student_records[roll]['sessions'].append(0)
-    
-#     # Remove students with no attendance data
-#     student_records = {
-#         roll: data for roll, data in student_records.items()
-#         if (data['present'] + data['absent']) > 0
-#     }
-    
-#     return student_records
-
-
-# def extract_student_features(student_records):
-#     """
-#     Extract and normalize features from student records
-#     """
-#     features, labels, students = [], [], []
-    
-#     for roll, record in student_records.items():
-#         total = record['present'] + record['absent']
-#         if total == 0:
-#             continue
-        
-#         # Calculate attendance rate
-#         rate = (record['present'] / total) * 100
-        
-#         # Calculate consistency score
-#         consistency = 0
-#         if len(record['sessions']) > 1:
-#             consecutive = 0
-#             max_consecutive = 0
-#             for attended in record['sessions']:
-#                 if attended:
-#                     consecutive += 1
-#                     max_consecutive = max(max_consecutive, consecutive)
-#                 else:
-#                     consecutive = 0
-#             consistency = (max_consecutive / len(record['sessions'])) * 100
-        
-#         # Handle edge cases
-#         rate = np.clip(rate, 0, 100)
-#         consistency = np.clip(consistency, 0, 100)
-        
-#         features.append([
-#             rate,
-#             record['present'],
-#             record['absent'],
-#             consistency
-#         ])
-#         labels.append(1 if rate >= 75 else 0)
-#         students.append(roll)
-    
-#     return np.array(features), np.array(labels), students
-
-
-# # ============================================================
-# # ML ENDPOINTS WITH DATA CLEANING
-# # ============================================================
-
 # @api_view(['POST'])
 # @permission_classes([IsAuthenticated])
 # def linear_regression_prediction(request):
@@ -1031,21 +479,20 @@ def ml_models_info(request):
 #         data = request.data
 #         sessions = data.get('sessions', [])
         
-#         # Data cleaning
-#         sessions = clean_session_data(sessions)
-        
 #         if len(sessions) < 3:
 #             return Response({
 #                 'error': 'Need at least 3 sessions for regression analysis'
 #             }, status=400)
         
-#         # Preprocess data
-#         df = preprocess_attendance_data(sessions)
+#         # Prepare data
+#         df = pd.DataFrame(sessions)
+#         df['date'] = pd.to_datetime(df['session_created'])
+#         df = df.sort_values('date')
         
-#         if len(df) < 3:
-#             return Response({
-#                 'error': 'Insufficient valid sessions after data cleaning'
-#             }, status=400)
+#         df['attendance_rate'] = (
+#             df['num_students_attended'] / 
+#             (df['num_students_attended'] + df['num_students_absent'])
+#         ) * 100
         
 #         X = np.arange(len(df)).reshape(-1, 1)
 #         y = df['attendance_rate'].values
@@ -1065,7 +512,7 @@ def ml_models_info(request):
 #                 'session_id': row['session_id'],
 #                 'date': row['date'].strftime('%Y-%m-%d'),
 #                 'actual': round(row['attendance_rate'], 2),
-#                 'predicted': round(y_pred[i], 2)
+#                 'predicted': round(y_pred[list(df.index).index(i)], 2)
 #             })
         
 #         future_data = []
@@ -1109,23 +556,47 @@ def ml_models_info(request):
 #         data = request.data
 #         sessions = data.get('sessions', [])
         
-#         # Data cleaning
-#         sessions = clean_session_data(sessions)
-        
 #         if len(sessions) < 2:
 #             return Response({'error': 'Need at least 2 sessions for classification'}, status=400)
         
-#         # Clean student records
-#         student_records = clean_student_records(sessions)
+#         student_records = {}
+#         for session in sessions:
+#             for roll in session.get('present_roll_numbers', []):
+#                 student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
+#                 student_records[roll]['present'] += 1
+#                 student_records[roll]['sessions'].append(1)
+#             for roll in session.get('absent_roll_numbers', []):
+#                 student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
+#                 student_records[roll]['absent'] += 1
+#                 student_records[roll]['sessions'].append(0)
         
 #         if len(student_records) < 5:
 #             return Response({'error': 'Need at least 5 students for classification'}, status=400)
         
-#         # Extract features
-#         X, y, students = extract_student_features(student_records)
+#         features, labels, students = [], [], []
+#         for roll, record in student_records.items():
+#             total = record['present'] + record['absent']
+#             if total == 0:
+#                 continue
+#             rate = (record['present'] / total) * 100
+            
+#             consistency = 0
+#             if len(record['sessions']) > 1:
+#                 consecutive = 0
+#                 max_consecutive = 0
+#                 for attended in record['sessions']:
+#                     if attended:
+#                         consecutive += 1
+#                         max_consecutive = max(max_consecutive, consecutive)
+#                     else:
+#                         consecutive = 0
+#                 consistency = (max_consecutive / len(record['sessions'])) * 100
+            
+#             features.append([rate, record['present'], record['absent'], consistency])
+#             labels.append(1 if rate >= 75 else 0)
+#             students.append(roll)
         
-#         if len(X) == 0:
-#             return Response({'error': 'No valid student data after cleaning'}, status=400)
+#         X, y = np.array(features), np.array(labels)
         
 #         model = RandomForestClassifier(
 #             n_estimators=100, max_depth=10, random_state=42, class_weight='balanced'
@@ -1153,10 +624,10 @@ def ml_models_info(request):
 #             prob = probabilities[i]
 #             student_data = {
 #                 'roll': roll,
-#                 'attendance_rate': round(X[i][0], 2),
-#                 'present': int(X[i][1]),
-#                 'absent': int(X[i][2]),
-#                 'consistency': round(X[i][3], 2),
+#                 'attendance_rate': round(features[i][0], 2),
+#                 'present': int(features[i][1]),
+#                 'absent': int(features[i][2]),
+#                 'consistency': round(features[i][3], 2),
 #                 'prediction': 'Pass' if pred == 1 else 'Fail',
 #                 'confidence': round(max(prob) * 100, 2),
 #             }
@@ -1195,14 +666,19 @@ def ml_models_info(request):
 #         sessions = data.get('sessions', [])
 #         n_clusters = data.get('n_clusters', 4)
         
-#         # Data cleaning
-#         sessions = clean_session_data(sessions)
-        
 #         if len(sessions) < 2:
 #             return Response({'error': 'Need at least 2 sessions for clustering'}, status=400)
         
-#         # Clean student records
-#         student_records = clean_student_records(sessions)
+#         student_records = {}
+#         for session in sessions:
+#             for roll in session.get('present_roll_numbers', []):
+#                 student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
+#                 student_records[roll]['present'] += 1
+#                 student_records[roll]['sessions'].append(1)
+#             for roll in session.get('absent_roll_numbers', []):
+#                 student_records.setdefault(roll, {'present': 0, 'absent': 0, 'sessions': []})
+#                 student_records[roll]['absent'] += 1
+#                 student_records[roll]['sessions'].append(0)
         
 #         if len(student_records) < n_clusters:
 #             return Response({'error': f'Need at least {n_clusters} students for {n_clusters} clusters'}, status=400)
@@ -1226,19 +702,10 @@ def ml_models_info(request):
 #                         consecutive = 0
 #                 consistency = (max_consecutive / len(record['sessions'])) * 100
             
-#             # Clip values to valid ranges
-#             rate = np.clip(rate, 0, 100)
-#             consistency = np.clip(consistency, 0, 100)
-            
 #             features.append([rate, consistency, total])
 #             students.append(roll)
         
-#         if len(features) < n_clusters:
-#             return Response({'error': 'Insufficient valid students after cleaning'}, status=400)
-        
 #         X = np.array(features)
-        
-#         # Standardize features
 #         scaler = StandardScaler()
 #         X_scaled = scaler.fit_transform(X)
         
@@ -1338,3 +805,536 @@ def ml_models_info(request):
 #             }
 #         ]
 #     })
+# ============================================================
+# ✅ MACHINE LEARNING FEATURES (WITH DATA CLEANING)
+# ============================================================
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, accuracy_score, silhouette_score
+from datetime import datetime
+import json
+
+
+# ============================================================
+# DATA CLEANING AND PREPROCESSING UTILITIES
+# ============================================================
+
+def clean_session_data(sessions):
+    """
+    Clean and validate session data
+    - Remove duplicates
+    - Handle missing values
+    - Validate data types
+    - Remove invalid entries
+    """
+    if not sessions:
+        return []
+    
+    cleaned_sessions = []
+    seen_session_ids = set()
+    
+    for session in sessions:
+        # Skip duplicates
+        session_id = session.get('session_id')
+        if session_id in seen_session_ids:
+            continue
+        seen_session_ids.add(session_id)
+        
+        # Validate required fields
+        if not session.get('session_created'):
+            continue
+        
+        # Clean and validate numeric fields
+        num_attended = session.get('num_students_attended', 0)
+        num_absent = session.get('num_students_absent', 0)
+        
+        # Convert to int and handle invalid values
+        try:
+            num_attended = max(0, int(num_attended))
+            num_absent = max(0, int(num_absent))
+        except (ValueError, TypeError):
+            continue
+        
+        # Skip sessions with no students
+        if num_attended + num_absent == 0:
+            continue
+        
+        # Clean roll number lists
+        present_rolls = session.get('present_roll_numbers', [])
+        absent_rolls = session.get('absent_roll_numbers', [])
+        
+        # Remove invalid roll numbers and duplicates
+        present_rolls = list(set([r for r in present_rolls if r]))
+        absent_rolls = list(set([r for r in absent_rolls if r]))
+        
+        # Remove overlaps (student can't be both present and absent)
+        absent_rolls = [r for r in absent_rolls if r not in present_rolls]
+        
+        cleaned_sessions.append({
+            'session_id': session_id,
+            'session_created': session['session_created'],
+            'num_students_attended': num_attended,
+            'num_students_absent': num_absent,
+            'present_roll_numbers': present_rolls,
+            'absent_roll_numbers': absent_rolls
+        })
+    
+    return cleaned_sessions
+
+
+def preprocess_attendance_data(sessions):
+    """
+    Preprocess session data for regression analysis
+    - Parse dates
+    - Calculate attendance rates
+    - Sort chronologically
+    - Handle outliers
+    """
+    df = pd.DataFrame(sessions)
+    
+    # Parse dates
+    df['date'] = pd.to_datetime(df['session_created'], errors='coerce')
+    df = df.dropna(subset=['date'])
+    df = df.sort_values('date').reset_index(drop=True)
+    
+    # Calculate attendance rate
+    total_students = df['num_students_attended'] + df['num_students_absent']
+    df['attendance_rate'] = (df['num_students_attended'] / total_students) * 100
+    
+    # Handle outliers using IQR method
+    Q1 = df['attendance_rate'].quantile(0.25)
+    Q3 = df['attendance_rate'].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = max(0, Q1 - 1.5 * IQR)
+    upper_bound = min(100, Q3 + 1.5 * IQR)
+    
+    # Cap outliers instead of removing them
+    df['attendance_rate'] = df['attendance_rate'].clip(lower_bound, upper_bound)
+    
+    return df
+
+
+def clean_student_records(sessions):
+    """
+    Clean and aggregate student records
+    - Remove invalid roll numbers
+    - Handle missing data
+    - Calculate consistent metrics
+    """
+    student_records = {}
+    
+    for session in sessions:
+        present_rolls = session.get('present_roll_numbers', [])
+        absent_rolls = session.get('absent_roll_numbers', [])
+        
+        # Process present students
+        for roll in present_rolls:
+            # Clean roll number
+            roll = str(roll).strip()
+            if not roll or roll.lower() == 'none':
+                continue
+            
+            if roll not in student_records:
+                student_records[roll] = {
+                    'present': 0,
+                    'absent': 0,
+                    'sessions': []
+                }
+            student_records[roll]['present'] += 1
+            student_records[roll]['sessions'].append(1)
+        
+        # Process absent students
+        for roll in absent_rolls:
+            roll = str(roll).strip()
+            if not roll or roll.lower() == 'none':
+                continue
+            
+            if roll not in student_records:
+                student_records[roll] = {
+                    'present': 0,
+                    'absent': 0,
+                    'sessions': []
+                }
+            student_records[roll]['absent'] += 1
+            student_records[roll]['sessions'].append(0)
+    
+    # Remove students with no attendance data
+    student_records = {
+        roll: data for roll, data in student_records.items()
+        if (data['present'] + data['absent']) > 0
+    }
+    
+    return student_records
+
+
+def extract_student_features(student_records):
+    """
+    Extract and normalize features from student records
+    """
+    features, labels, students = [], [], []
+    
+    for roll, record in student_records.items():
+        total = record['present'] + record['absent']
+        if total == 0:
+            continue
+        
+        # Calculate attendance rate
+        rate = (record['present'] / total) * 100
+        
+        # Calculate consistency score
+        consistency = 0
+        if len(record['sessions']) > 1:
+            consecutive = 0
+            max_consecutive = 0
+            for attended in record['sessions']:
+                if attended:
+                    consecutive += 1
+                    max_consecutive = max(max_consecutive, consecutive)
+                else:
+                    consecutive = 0
+            consistency = (max_consecutive / len(record['sessions'])) * 100
+        
+        # Handle edge cases
+        rate = np.clip(rate, 0, 100)
+        consistency = np.clip(consistency, 0, 100)
+        
+        features.append([
+            rate,
+            record['present'],
+            record['absent'],
+            consistency
+        ])
+        labels.append(1 if rate >= 75 else 0)
+        students.append(roll)
+    
+    return np.array(features), np.array(labels), students
+
+
+# ============================================================
+# ML ENDPOINTS WITH DATA CLEANING
+# ============================================================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def linear_regression_prediction(request):
+    """
+    Linear Regression for Attendance Trend Analysis
+    Predicts future attendance rates based on historical data
+    """
+    try:
+        data = request.data
+        sessions = data.get('sessions', [])
+        
+        # Data cleaning
+        sessions = clean_session_data(sessions)
+        
+        if len(sessions) < 3:
+            return Response({
+                'error': 'Need at least 3 sessions for regression analysis'
+            }, status=400)
+        
+        # Preprocess data
+        df = preprocess_attendance_data(sessions)
+        
+        if len(df) < 3:
+            return Response({
+                'error': 'Insufficient valid sessions after data cleaning'
+            }, status=400)
+        
+        X = np.arange(len(df)).reshape(-1, 1)
+        y = df['attendance_rate'].values
+        
+        model = LinearRegression()
+        model.fit(X, y)
+        y_pred = model.predict(X)
+        
+        r2 = r2_score(y, y_pred)
+        
+        future_X = np.arange(len(df), len(df) + 5).reshape(-1, 1)
+        future_predictions = np.clip(model.predict(future_X), 0, 100)
+        
+        historical_data = []
+        for i, row in df.iterrows():
+            historical_data.append({
+                'session_id': row['session_id'],
+                'date': row['date'].strftime('%Y-%m-%d'),
+                'actual': round(row['attendance_rate'], 2),
+                'predicted': round(y_pred[i], 2)
+            })
+        
+        future_data = []
+        for i, pred in enumerate(future_predictions):
+            future_data.append({
+                'session': f'Session {len(df) + i + 1}',
+                'predicted': round(pred, 2),
+                'confidence': round(max(60, 95 - (i * 7)), 2)
+            })
+        
+        slope = model.coef_[0]
+        trend = 'Improving' if slope > 0.5 else 'Declining' if slope < -0.5 else 'Stable'
+        
+        return Response({
+            'model': 'Linear Regression',
+            'algorithm': 'scikit-learn LinearRegression',
+            'metrics': {
+                'r2_score': round(r2, 4),
+                'slope': round(slope, 4),
+                'intercept': round(model.intercept_, 2),
+                'equation': f'y = {slope:.4f}x + {model.intercept_:.2f}'
+            },
+            'trend': trend,
+            'historical_data': historical_data,
+            'future_predictions': future_data,
+            'sessions_analyzed': len(df)
+        })
+        
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def random_forest_classification(request):
+    """
+    Random Forest for Student Risk Classification
+    Classifies students as Pass/Fail based on attendance patterns
+    """
+    try:
+        data = request.data
+        sessions = data.get('sessions', [])
+        
+        # Data cleaning
+        sessions = clean_session_data(sessions)
+        
+        if len(sessions) < 2:
+            return Response({'error': 'Need at least 2 sessions for classification'}, status=400)
+        
+        # Clean student records
+        student_records = clean_student_records(sessions)
+        
+        if len(student_records) < 5:
+            return Response({'error': 'Need at least 5 students for classification'}, status=400)
+        
+        # Extract features
+        X, y, students = extract_student_features(student_records)
+        
+        if len(X) == 0:
+            return Response({'error': 'No valid student data after cleaning'}, status=400)
+        
+        model = RandomForestClassifier(
+            n_estimators=100, max_depth=10, random_state=42, class_weight='balanced'
+        )
+        
+        if len(X) >= 10:
+            X_train, X_test, y_train, y_test, _, students_test = train_test_split(
+                X, y, students, test_size=0.2, random_state=42
+            )
+            model.fit(X_train, y_train)
+            accuracy = accuracy_score(y_test, model.predict(X_test))
+        else:
+            model.fit(X, y)
+            accuracy = accuracy_score(y, model.predict(X))
+        
+        predictions = model.predict(X)
+        probabilities = model.predict_proba(X)
+        
+        feature_names = ['Attendance Rate', 'Present Count', 'Absent Count', 'Consistency']
+        importance = dict(zip(feature_names, model.feature_importances_))
+        
+        classifications, pass_students, fail_students = [], [], []
+        for i, roll in enumerate(students):
+            pred = predictions[i]
+            prob = probabilities[i]
+            student_data = {
+                'roll': roll,
+                'attendance_rate': round(X[i][0], 2),
+                'present': int(X[i][1]),
+                'absent': int(X[i][2]),
+                'consistency': round(X[i][3], 2),
+                'prediction': 'Pass' if pred == 1 else 'Fail',
+                'confidence': round(max(prob) * 100, 2),
+            }
+            classifications.append(student_data)
+            (pass_students if pred == 1 else fail_students).append(student_data)
+        
+        return Response({
+            'model': 'Random Forest Classifier',
+            'algorithm': 'scikit-learn RandomForestClassifier',
+            'metrics': {
+                'accuracy': round(accuracy * 100, 2),
+                'total_students': len(students),
+                'pass_predictions': len(pass_students),
+                'fail_predictions': len(fail_students)
+            },
+            'feature_importance': {k: round(v * 100, 2) for k, v in importance.items()},
+            'classifications': classifications,
+            'pass_students': pass_students,
+            'fail_students': fail_students,
+            'sessions_analyzed': len(sessions)
+        })
+        
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def kmeans_clustering(request):
+    """
+    K-Means Clustering for Student Segmentation
+    Groups students into performance clusters
+    """
+    try:
+        data = request.data
+        sessions = data.get('sessions', [])
+        n_clusters = data.get('n_clusters', 4)
+        
+        # Data cleaning
+        sessions = clean_session_data(sessions)
+        
+        if len(sessions) < 2:
+            return Response({'error': 'Need at least 2 sessions for clustering'}, status=400)
+        
+        # Clean student records
+        student_records = clean_student_records(sessions)
+        
+        if len(student_records) < n_clusters:
+            return Response({'error': f'Need at least {n_clusters} students for {n_clusters} clusters'}, status=400)
+        
+        features, students = [], []
+        for roll, record in student_records.items():
+            total = record['present'] + record['absent']
+            if total == 0:
+                continue
+            rate = (record['present'] / total) * 100
+            
+            consistency = 0
+            if len(record['sessions']) > 1:
+                consecutive = 0
+                max_consecutive = 0
+                for attended in record['sessions']:
+                    if attended:
+                        consecutive += 1
+                        max_consecutive = max(max_consecutive, consecutive)
+                    else:
+                        consecutive = 0
+                consistency = (max_consecutive / len(record['sessions'])) * 100
+            
+            # Clip values to valid ranges
+            rate = np.clip(rate, 0, 100)
+            consistency = np.clip(consistency, 0, 100)
+            
+            features.append([rate, consistency, total])
+            students.append(roll)
+        
+        if len(features) < n_clusters:
+            return Response({'error': 'Insufficient valid students after cleaning'}, status=400)
+        
+        X = np.array(features)
+        
+        # Standardize features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(X_scaled)
+        silhouette = silhouette_score(X_scaled, cluster_labels)
+        centers = scaler.inverse_transform(kmeans.cluster_centers_)
+        
+        clusters = {}
+        for i in range(n_clusters):
+            cluster_students = []
+            cluster_indices = np.where(cluster_labels == i)[0]
+            for idx in cluster_indices:
+                cluster_students.append({
+                    'roll': students[idx],
+                    'attendance_rate': round(features[idx][0], 2),
+                    'consistency': round(features[idx][1], 2),
+                    'total_sessions': int(features[idx][2])
+                })
+            cluster_students.sort(key=lambda x: x['attendance_rate'], reverse=True)
+            
+            avg_rate = centers[i][0]
+            if avg_rate >= 90:
+                cluster_name = 'Excellent (90–100%)'
+            elif avg_rate >= 80:
+                cluster_name = 'Good (80–89%)'
+            elif avg_rate >= 70:
+                cluster_name = 'Satisfactory (70–79%)'
+            elif avg_rate >= 60:
+                cluster_name = 'Needs Improvement (60–69%)'
+            else:
+                cluster_name = 'At Risk (<60%)'
+            
+            clusters[f'cluster_{i}'] = {
+                'name': cluster_name,
+                'center': {
+                    'attendance_rate': round(centers[i][0], 2),
+                    'consistency': round(centers[i][1], 2),
+                    'avg_sessions': round(centers[i][2], 2)
+                },
+                'size': len(cluster_students),
+                'students': cluster_students
+            }
+        
+        sorted_clusters = dict(sorted(
+            clusters.items(), key=lambda x: x[1]['center']['attendance_rate'], reverse=True
+        ))
+        
+        return Response({
+            'model': 'K-Means Clustering',
+            'algorithm': 'scikit-learn KMeans',
+            'metrics': {
+                'n_clusters': n_clusters,
+                'silhouette_score': round(silhouette, 4),
+                'total_students': len(students),
+                'inertia': round(kmeans.inertia_, 2)
+            },
+            'clusters': sorted_clusters,
+            'sessions_analyzed': len(sessions)
+        })
+        
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def ml_models_info(request):
+    """
+    Returns information about available ML models
+    """
+    return Response({
+        'available_models': [
+            {
+                'id': 'linear-regression',
+                'name': 'Linear Regression',
+                'description': 'Predicts future attendance trends using historical data',
+                'type': 'Regression',
+                'endpoint': '/api/ml/linear-regression/',
+                'min_sessions': 3
+            },
+            {
+                'id': 'random-forest',
+                'name': 'Random Forest Classifier',
+                'description': 'Classifies students as Pass/Fail based on attendance patterns',
+                'type': 'Classification',
+                'endpoint': '/api/ml/random-forest/',
+                'min_students': 5
+            },
+            {
+                'id': 'kmeans',
+                'name': 'K-Means Clustering',
+                'description': 'Groups students into performance clusters',
+                'type': 'Clustering',
+                'endpoint': '/api/ml/kmeans/',
+                'min_students': 4
+            }
+        ]
+    })
