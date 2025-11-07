@@ -78,7 +78,8 @@ class CookieLoginView(APIView):
         # ✅ Add CORS headers manually (important for cross-site cookies)
         response["Access-Control-Allow-Origin"] = "https://attend-frontend-sandy.vercel.app"
         response["Access-Control-Allow-Credentials"] = "true"
-
+        response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
+        response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE, PUT, PATCH"
         return response
 
 
@@ -96,7 +97,8 @@ class LogoutView(APIView):
         # ✅ Include same CORS headers for cross-site cookie deletion
         response["Access-Control-Allow-Origin"] = "https://attend-frontend-sandy.vercel.app"
         response["Access-Control-Allow-Credentials"] = "true"
-
+        response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
+        response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE, PUT, PATCH"
         return response
     
 # ---------------- LOGOUT -----------------

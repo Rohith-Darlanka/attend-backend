@@ -108,9 +108,11 @@ CORS_ALLOWED_ORIGINS = [
     "https://attend-frontend-sandy.vercel.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://student-attendance-ochre.vercel.app"
 ]
 CSRF_TRUSTED_ORIGINS = [
     "https://attend-frontend-sandy.vercel.app",
+    "https://student-attendance-ochre.vercel.app",
     "https://attend-backend-krgx.onrender.com",
 ]
 
