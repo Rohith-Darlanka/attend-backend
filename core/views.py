@@ -92,7 +92,7 @@ class CookieLoginView(APIView):
 # ---------------- LOGOUT -----------------
 class LogoutView(APIView):
     permission_classes = [AllowAny]
-    authentication_classes = [CookieJWTAuthentication]
+    authentication_classes = []  # ✅ Don't authenticate on logout
 
     def post(self, request):
         try:
@@ -101,29 +101,34 @@ class LogoutView(APIView):
                 status=status.HTTP_200_OK
             )
 
-            # ✅ Delete cookies with ALL necessary parameters for cross-domain
-            cookie_settings = {
-                'path': '/',
-                'samesite': 'None',  # Required for cross-domain
-                'secure': True,      # Required when SameSite=None
-                'httponly': True,    # Security best practice
-            }
+            # ✅ IMPORTANT: delete_cookie() does NOT accept 'httponly' parameter!
+            # Only accepts: key, path, domain, samesite, secure
+            response.delete_cookie(
+                key='access_token',
+                path='/',
+                samesite='None',
+                secure=True,
+            )
             
-            # If you set a domain during login, you MUST match it here
-            # Example: if your backend is api.yourdomain.com and frontend is yourdomain.com
-            # cookie_settings['domain'] = '.yourdomain.com'  # Note the leading dot
-            
-            response.delete_cookie('access_token', **cookie_settings)
-            response.delete_cookie('refresh_token', **cookie_settings)
+            response.delete_cookie(
+                key='refresh_token',
+                path='/',
+                samesite='None',
+                secure=True,
+            )
 
             return response
 
         except Exception as e:
+            # Log error for debugging in Render logs
+            print(f"Logout error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             return Response(
                 {"error": f"Logout failed: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 # ---------------- ATTENDANCE -----------------
 class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
