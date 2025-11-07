@@ -90,6 +90,7 @@ class CookieLoginView(APIView):
 
 
 # ---------------- LOGOUT -----------------
+# ---------------- LOGOUT -----------------
 class LogoutView(APIView):
     permission_classes = [AllowAny]  # Allow even if not logged in
     authentication_classes = [CookieJWTAuthentication]
@@ -101,24 +102,18 @@ class LogoutView(APIView):
                 status=status.HTTP_200_OK
             )
 
-            cookie_settings = {
-                "path": "/",
-                "secure": True,
-                "httponly": True,
-                "samesite": "None",
-            }
+            # ✅ delete_cookie() only supports: key, path, domain
+            response.delete_cookie("access_token", path="/")
+            response.delete_cookie("refresh_token", path="/")
 
-            response.delete_cookie("access_token", **cookie_settings)
-            response.delete_cookie("refresh_token", **cookie_settings)
             return response
 
         except Exception as e:
-            # Prevent 500 errors if cookies or tokens are missing
+            # ✅ Handle errors gracefully (prevents 500)
             return Response(
                 {"error": f"Logout failed: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
 
 # ---------------- ATTENDANCE -----------------
 class AttendanceViewSet(viewsets.ModelViewSet):
