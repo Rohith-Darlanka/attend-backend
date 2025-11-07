@@ -83,32 +83,48 @@ class CookieLoginView(APIView):
 
 
 # ---------------- LOGOUT -----------------
-# ---------------- LOGOUT -----------------
 class LogoutView(APIView):
     permission_classes = [AllowAny]
-    authentication_classes = []  # ✅ No auth needed to log out
 
     def post(self, request):
-        try:
-            response = Response(
-                {"message": "Logged out successfully"},
-                status=status.HTTP_200_OK
-            )
+        response = Response({"message": "Logged out successfully"}, status=status.HTTP_200_OK)
 
-            # ✅ delete_cookie only supports key, path, domain
-            response.delete_cookie("access_token", path="/")
-            response.delete_cookie("refresh_token", path="/")
+        # ✅ Explicitly match cookies for deletion
+        response.delete_cookie("access_token", path="/", samesite="None")
+        response.delete_cookie("refresh_token", path="/", samesite="None")
 
-            return response
+        # ✅ Include same CORS headers for cross-site cookie deletion
+        response["Access-Control-Allow-Origin"] = "https://attend-frontend-sandy.vercel.app"
+        response["Access-Control-Allow-Credentials"] = "true"
 
-        except Exception as e:
-            print(f"Logout error: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {"error": f"Logout failed: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return response
+    
+# ---------------- LOGOUT -----------------
+# class LogoutView(APIView):
+#     permission_classes = [AllowAny]
+#     authentication_classes = []  # ✅ No auth needed to log out
+
+#     def post(self, request):
+#         try:
+#             response = Response(
+#                 {"message": "Logged out successfully"},
+#                 status=status.HTTP_200_OK
+#             )
+
+#             # ✅ delete_cookie only supports key, path, domain
+#             response.delete_cookie("access_token", path="/")
+#             response.delete_cookie("refresh_token", path="/")
+
+#             return response
+
+#         except Exception as e:
+#             print(f"Logout error: {str(e)}")
+#             import traceback
+#             traceback.print_exc()
+#             return Response(
+#                 {"error": f"Logout failed: {str(e)}"},
+#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+#             )
 
 # ---------------- ATTENDANCE -----------------
 class AttendanceViewSet(viewsets.ModelViewSet):
