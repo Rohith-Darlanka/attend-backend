@@ -91,23 +91,33 @@ class CookieLoginView(APIView):
 
 # ---------------- LOGOUT -----------------
 class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]  # Allow even if not logged in
     authentication_classes = [CookieJWTAuthentication]
 
     def post(self, request):
-        response = Response({"message": "Logged out successfully"}, status=200)
+        try:
+            response = Response(
+                {"message": "Logged out successfully"},
+                status=status.HTTP_200_OK
+            )
 
-        cookie_settings = {
-            "path": "/",
-            "secure": True,
-            "httponly": True,
-            "samesite": "None",
-        }
+            cookie_settings = {
+                "path": "/",
+                "secure": True,
+                "httponly": True,
+                "samesite": "None",
+            }
 
-        response.delete_cookie("access_token", **cookie_settings)
-        response.delete_cookie("refresh_token", **cookie_settings)
-        return response
+            response.delete_cookie("access_token", **cookie_settings)
+            response.delete_cookie("refresh_token", **cookie_settings)
+            return response
 
+        except Exception as e:
+            # Prevent 500 errors if cookies or tokens are missing
+            return Response(
+                {"error": f"Logout failed: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 # ---------------- ATTENDANCE -----------------
