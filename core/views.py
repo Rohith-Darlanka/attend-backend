@@ -90,9 +90,10 @@ class CookieLoginView(APIView):
 
 
 # ---------------- LOGOUT -----------------
+# ---------------- LOGOUT -----------------
 class LogoutView(APIView):
     permission_classes = [AllowAny]
-    authentication_classes = []  # ✅ Don't authenticate on logout
+    authentication_classes = []  # ✅ No auth needed to log out
 
     def post(self, request):
         try:
@@ -101,34 +102,21 @@ class LogoutView(APIView):
                 status=status.HTTP_200_OK
             )
 
-            # ✅ IMPORTANT: delete_cookie() does NOT accept 'httponly' parameter!
-            # Only accepts: key, path, domain, samesite, secure
-            response.delete_cookie(
-                key='access_token',
-                path='/',
-                samesite='None',
-                secure=True,
-            )
-            
-            response.delete_cookie(
-                key='refresh_token',
-                path='/',
-                samesite='None',
-                secure=True,
-            )
+            # ✅ delete_cookie only supports key, path, domain
+            response.delete_cookie("access_token", path="/")
+            response.delete_cookie("refresh_token", path="/")
 
             return response
 
         except Exception as e:
-            # Log error for debugging in Render logs
             print(f"Logout error: {str(e)}")
             import traceback
             traceback.print_exc()
-            
             return Response(
                 {"error": f"Logout failed: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 # ---------------- ATTENDANCE -----------------
 class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
