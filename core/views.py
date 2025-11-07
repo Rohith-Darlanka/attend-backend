@@ -64,27 +64,20 @@ class CookieLoginView(APIView):
         refresh_token = str(refresh)
 
         response = Response({"message": "Login successful"}, status=status.HTTP_200_OK)
+        cookie_args = {
+            "max_age": 7 * 24 * 60 * 60,
+            "httponly": True,
+            "secure": True,
+            "samesite": "None",
+            "path": "/",
+        }
 
-        max_age = 7 * 24 * 60 * 60  # 7 days in seconds
+        response.set_cookie("access_token", access_token, **cookie_args)
+        response.set_cookie("refresh_token", refresh_token, **cookie_args)
 
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            max_age=max_age,
-            httponly=True,
-            secure=True,  # True in production with HTTPS
-            samesite="None",
-            path="/",
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            max_age=max_age,
-            httponly=True,
-            secure=True,  # True in production with HTTPS
-            samesite="None",
-            path="/",
-        )
+        # ✅ Add CORS headers manually (important for cross-site cookies)
+        response["Access-Control-Allow-Origin"] = "https://attend-frontend-sandy.vercel.app"
+        response["Access-Control-Allow-Credentials"] = "true"
 
         return response
 
